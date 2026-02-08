@@ -1,5 +1,6 @@
 
 
+
 // A zero-dependency retro sound synthesizer using Web Audio API
 
 // Music Note Definition (Frequency in Hz)
@@ -21,7 +22,7 @@ interface NoteEvent {
 }
 
 class AudioManager {
-  private ctx: AudioContext | null = null;
+  public ctx: AudioContext | null = null; // Made public for direct access if needed, or keep private and add getter
   private sfxGain: GainNode | null = null;
   private bgmGain: GainNode | null = null;
   
@@ -62,6 +63,31 @@ class AudioManager {
     }
   }
 
+  // Mobile Unlock: Call this on first user interaction
+  public resumeContext() {
+    if (!this.initialized || !this.ctx) this.init();
+    
+    if (this.ctx) {
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+        // Mobile Safari unlock hack: Play a silent buffer
+        try {
+            const buffer = this.ctx.createBuffer(1, 1, 22050);
+            const source = this.ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(this.ctx.destination);
+            source.start(0);
+        } catch(e) {
+            // Ignore errors here
+        }
+    }
+  }
+
+  public isContextRunning(): boolean {
+      return this.ctx !== null && this.ctx.state === 'running';
+  }
+
   public setSfxMuted(muted: boolean) {
     this.isSfxMuted = muted;
     if (this.sfxGain && this.ctx) {
@@ -87,8 +113,11 @@ class AudioManager {
 
   public playBGM(theme: BGMTheme) {
     if (!this.initialized) this.init();
-    if (this.currentTheme === theme) return;
+    
+    // Auto-resume if suspended (attempt)
     if (this.ctx?.state === 'suspended') this.ctx.resume();
+
+    if (this.currentTheme === theme) return;
 
     this.stopBGM();
     this.currentTheme = theme;
@@ -116,6 +145,16 @@ class AudioManager {
 
   private scheduleNextNote() {
     if (!this.ctx || !this.bgmGain || this.currentTheme === 'NONE') return;
+
+    // Safety: If context is suspended, we shouldn't pile up timeouts too fast.
+    // However, for BGM continuity, we generally rely on the resume() unfreezing time.
+    // But if state is suspended, currentTime doesn't advance, so scheduling at startTime (currentTime) works,
+    // but they will all play at once when resumed if we aren't careful.
+    // Ideally, wait until running.
+    if (this.ctx.state === 'suspended') {
+        this.bgmTimeout = setTimeout(() => this.scheduleNextNote(), 500);
+        return;
+    }
 
     // Define Patterns
     let sequence: NoteEvent[] = [];
@@ -296,6 +335,7 @@ class AudioManager {
   private playTone(freq: number, type: OscillatorType, duration: number, startTime: number = 0) {
     if (!this.ctx || !this.sfxGain) return;
     
+    // Auto-resume if possible
     if (this.ctx.state === 'suspended') {
         this.ctx.resume();
     }
