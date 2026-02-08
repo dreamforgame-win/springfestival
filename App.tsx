@@ -83,25 +83,28 @@ const App: React.FC = () => {
   const [threatLevel, setThreatLevel] = useState<0 | 1 | 2 | 3>(0);
   const [levelGainedMoney, setLevelGainedMoney] = useState(0);
 
-  // Mobile Audio Unlocker
+  // Mobile Audio Unlocker - Aggressive
   useEffect(() => {
     const unlockAudio = () => {
+        // Just call resumeContext repeatedly on early interactions
         audioManager.resumeContext();
+        
+        // We only remove listener if we are sure it's running, 
+        // but on some iOS versions checking state immediately might be 'suspended' even if resuming.
+        // So we keep it for a few interactions or until we know it's good.
         if (audioManager.isContextRunning()) {
-            window.removeEventListener('click', unlockAudio);
-            window.removeEventListener('touchstart', unlockAudio);
-            window.removeEventListener('keydown', unlockAudio);
+             window.removeEventListener('touchstart', unlockAudio);
+             window.removeEventListener('click', unlockAudio);
         }
     };
 
+    // 'touchstart' is critical for iOS Safari
+    window.addEventListener('touchstart', unlockAudio, { passive: true });
     window.addEventListener('click', unlockAudio);
-    window.addEventListener('touchstart', unlockAudio);
-    window.addEventListener('keydown', unlockAudio);
 
     return () => {
-        window.removeEventListener('click', unlockAudio);
         window.removeEventListener('touchstart', unlockAudio);
-        window.removeEventListener('keydown', unlockAudio);
+        window.removeEventListener('click', unlockAudio);
     };
   }, []);
 
