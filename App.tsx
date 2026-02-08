@@ -19,7 +19,7 @@ import BattleInterface from './components/BattleInterface';
 import CollectionGallery from './components/CollectionGallery';
 import ShopModal from './components/ShopModal';
 import AudioSettingsModal from './components/AudioSettingsModal';
-import { Trophy, RefreshCw, Book, Play, ArrowLeft, Footprints, Activity, Coins, Heart, ScrollText, ShoppingCart, Map, Building2, GraduationCap, Home, Volume2, VolumeX, Settings } from 'lucide-react';
+import { Trophy, RefreshCw, Book, Play, ArrowLeft, Coins, Heart, ShoppingCart, Map, Building2, GraduationCap, Home, VolumeX, Settings } from 'lucide-react';
 
 type ScreenState = 'START' | 'MAP_SELECT' | 'INTRO' | 'GAME' | 'COLLECTION';
 
@@ -121,25 +121,20 @@ const App: React.FC = () => {
 
   // BGM Management Logic
   useEffect(() => {
-    // 1. Menu Group (Start, Map Select, Collection) -> New Year Theme
-    // This allows BGM to persist when switching between these screens
     if (screen === 'START' || screen === 'MAP_SELECT' || screen === 'COLLECTION') {
         audioManager.playBGM('START');
         return;
     }
 
-    // 2. Game Screen
     if (screen === 'GAME') {
         if (battleState.isActive) {
             audioManager.playBGM('BATTLE');
         } else {
-            // Play map specific BGM
             audioManager.playBGM(gameState.mapType);
         }
         return;
     }
     
-    // 3. Intro/Result Screen -> Stop BGM (Let Win/Lose SFX play or silence)
     audioManager.stopBGM();
     
   }, [screen, battleState.isActive, gameState.mapType]);
@@ -355,7 +350,6 @@ const App: React.FC = () => {
 
     if (tiles[target.y][target.x] === TileType.EXIT) {
       if (gameState.inventory.length > 0) {
-        // Calculate Money based on Map Item Type (RED_ENVELOPE logic reused for MONEY_ITEM)
         let totalMoney = 0;
         gameState.inventory.forEach(item => {
             if (item.type === ItemType.MONEY_ITEM) {
@@ -402,12 +396,11 @@ const App: React.FC = () => {
         const mapH = tiles.length;
         const mapW = tiles[0].length;
 
-        let battleTarget: Entity | null = null;
+        let foundTarget: Entity | null = null;
         const npcs = nextEntities.filter(e => e.type === 'NPC' && !e.isDead);
         
-        // Fix: Use for...of instead of forEach for better TS inference on variable mutation (battleTarget)
         for (const npc of npcs) {
-            if (battleTarget) break;
+            if (foundTarget) break;
 
             const currentNpc = nextEntities.find(e => e.id === npc.id);
             if (!currentNpc) continue;
@@ -471,22 +464,25 @@ const App: React.FC = () => {
             if (moved || (nx === currentPPos.x && ny === currentPPos.y)) { 
                 if (nx === currentPPos.x && ny === currentPPos.y) {
                     currentNpc.pos = { x: nx, y: ny };
-                    if (!battleTarget) battleTarget = currentNpc;
+                    if (!foundTarget) foundTarget = currentNpc;
                 } else {
                     currentNpc.pos = { x: nx, y: ny };
                 }
             }
         }
 
-        if (battleTarget) {
-            const target = battleTarget as Entity;
-            if (target.npcType) {
-                // Fix: Explicitly assert type to avoid TS2339/TS7053
-                const npcName = NPC_NAMES[target.npcType as NpcType];
+        if (foundTarget) {
+            // FIX: Use explicit const variables and type assertion to ensure TS inference holds in closure
+            const target: Entity = foundTarget;
+            const npcTypeVal = target.npcType;
+            
+            if (npcTypeVal) {
+                // Pre-calculate name to avoid indexing inside setTimeout
+                const npcNameVal = NPC_NAMES[npcTypeVal as NpcType];
                 
                 setTimeout(() => {
-                    audioManager.playEncounter(); // Encounter sound
-                    setAggressionData({ active: true, npcName: npcName });
+                    audioManager.playEncounter();
+                    setAggressionData({ active: true, npcName: npcNameVal });
                     setTimeout(() => {
                         setAggressionData({ active: false, npcName: null });
                         startBattle(target);
