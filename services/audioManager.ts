@@ -1,6 +1,4 @@
 
-
-
 // A zero-dependency retro sound synthesizer using Web Audio API
 
 // Music Note Definition (Frequency in Hz)
@@ -22,13 +20,14 @@ interface NoteEvent {
 }
 
 class AudioManager {
-  public ctx: AudioContext | null = null; // Made public for direct access if needed, or keep private and add getter
+  public ctx: AudioContext | null = null;
   private sfxGain: GainNode | null = null;
   private bgmGain: GainNode | null = null;
   
   private isSfxMuted: boolean = false;
   private isBgmMuted: boolean = false;
   private initialized: boolean = false;
+  private unlocked: boolean = false; // Track if we've successfully unlocked audio on mobile
 
   // BGM State
   private currentBgmOscillators: OscillatorNode[] = [];
@@ -44,42 +43,53 @@ class AudioManager {
   public init() {
     if (this.initialized) return;
     try {
+      // Robust AudioContext creation for Safari/Webkit
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioContextClass();
-      
-      // SFX Gain Channel
-      this.sfxGain = this.ctx.createGain();
-      this.sfxGain.connect(this.ctx.destination);
-      this.sfxGain.gain.value = this.isSfxMuted ? 0 : 0.3; 
+      if (AudioContextClass) {
+          this.ctx = new AudioContextClass();
+          
+          // SFX Gain Channel
+          this.sfxGain = this.ctx.createGain();
+          this.sfxGain.connect(this.ctx.destination);
+          this.sfxGain.gain.value = this.isSfxMuted ? 0 : 0.3; 
 
-      // BGM Gain Channel (Separate)
-      this.bgmGain = this.ctx.createGain();
-      this.bgmGain.connect(this.ctx.destination);
-      this.bgmGain.gain.value = this.isBgmMuted ? 0 : 0.15;
+          // BGM Gain Channel (Separate)
+          this.bgmGain = this.ctx.createGain();
+          this.bgmGain.connect(this.ctx.destination);
+          this.bgmGain.gain.value = this.isBgmMuted ? 0 : 0.15;
 
-      this.initialized = true;
+          this.initialized = true;
+      }
     } catch (e) {
-      console.warn("Web Audio API not supported");
+      console.warn("Web Audio API not supported", e);
     }
   }
 
-  // Mobile Unlock: Call this on first user interaction
+  // --- CRITICAL MOBILE UNLOCK ---
   public resumeContext() {
     if (!this.initialized || !this.ctx) this.init();
     
     if (this.ctx) {
+        // 1. Force Resume
         if (this.ctx.state === 'suspended') {
-            this.ctx.resume();
+            this.ctx.resume().catch(e => console.error("Audio resume failed", e));
         }
-        // Mobile Safari unlock hack: Play a silent buffer
-        try {
-            const buffer = this.ctx.createBuffer(1, 1, 22050);
-            const source = this.ctx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(this.ctx.destination);
-            source.start(0);
-        } catch(e) {
-            // Ignore errors here
+
+        // 2. The "Oscillator Hack" for iOS Safari
+        // Playing a silent oscillator inside a user gesture is the most reliable way to unlock.
+        if (!this.unlocked) {
+            try {
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                gain.gain.value = 0.001; // Almost silent but technically playing
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(0);
+                osc.stop(0.1);
+                this.unlocked = true;
+            } catch(e) {
+                // Ignore errors
+            }
         }
     }
   }
@@ -112,10 +122,8 @@ class AudioManager {
   // --- BGM ENGINE ---
 
   public playBGM(theme: BGMTheme) {
-    if (!this.initialized) this.init();
-    
-    // Auto-resume if suspended (attempt)
-    if (this.ctx?.state === 'suspended') this.ctx.resume();
+    // Attempt resume whenever BGM starts
+    this.resumeContext();
 
     if (this.currentTheme === theme) return;
 
@@ -129,12 +137,10 @@ class AudioManager {
   }
 
   public stopBGM() {
-    // Clear timeout
     if (this.bgmTimeout) {
       clearTimeout(this.bgmTimeout);
       this.bgmTimeout = null;
     }
-    // Stop currently playing oscillators
     this.currentBgmOscillators.forEach(osc => {
       try { osc.stop(); } catch(e){}
     });
@@ -146,11 +152,7 @@ class AudioManager {
   private scheduleNextNote() {
     if (!this.ctx || !this.bgmGain || this.currentTheme === 'NONE') return;
 
-    // Safety: If context is suspended, we shouldn't pile up timeouts too fast.
-    // However, for BGM continuity, we generally rely on the resume() unfreezing time.
-    // But if state is suspended, currentTime doesn't advance, so scheduling at startTime (currentTime) works,
-    // but they will all play at once when resumed if we aren't careful.
-    // Ideally, wait until running.
+    // Retry mechanism if context is still suspended (common on mobile init)
     if (this.ctx.state === 'suspended') {
         this.bgmTimeout = setTimeout(() => this.scheduleNextNote(), 500);
         return;
@@ -158,40 +160,35 @@ class AudioManager {
 
     // Define Patterns
     let sequence: NoteEvent[] = [];
-    let tempo = 1.0; // Seconds per beat (lower is faster if notes are fractions)
+    let tempo = 1.0; 
     let waveType: OscillatorType = 'sine';
 
     switch (this.currentTheme) {
       case 'START':
-        // New Year Style (Pentatonic, Upbeat)
+        // New Year Style
         waveType = 'square';
         tempo = 0.22; 
         sequence = [
-          // Intro
           {freq: NOTES.C5, dur: 1}, {freq: NOTES.C5, dur: 1}, {freq: NOTES.C5, dur: 2}, 
           {freq: NOTES.A4, dur: 1}, {freq: NOTES.G4, dur: 1}, {freq: NOTES.E4, dur: 2},
-          // Theme A
           {freq: NOTES.C4, dur: 2}, {freq: NOTES.D4, dur: 2}, {freq: NOTES.E4, dur: 2}, {freq: NOTES.G4, dur: 2},
           {freq: NOTES.A4, dur: 4}, {freq: NOTES.G4, dur: 4},
           {freq: NOTES.E4, dur: 2}, {freq: NOTES.G4, dur: 2}, {freq: NOTES.A4, dur: 2}, {freq: NOTES.C5, dur: 2},
           {freq: NOTES.D5, dur: 4}, {freq: NOTES.D5, dur: 4},
-          // Theme B
           {freq: NOTES.C5, dur: 2}, {freq: NOTES.A4, dur: 2}, {freq: NOTES.G4, dur: 2}, {freq: NOTES.E4, dur: 2},
           {freq: NOTES.G4, dur: 2}, {freq: NOTES.A4, dur: 2}, {freq: NOTES.G4, dur: 4},
           {freq: NOTES.E4, dur: 2}, {freq: NOTES.D4, dur: 2}, {freq: NOTES.C4, dur: 2}, {freq: NOTES.D4, dur: 2},
           {freq: NOTES.C4, dur: 8},
-          // Bridge
           {freq: NOTES.A4, dur: 1}, {freq: NOTES.C5, dur: 1}, {freq: NOTES.A4, dur: 1}, {freq: NOTES.G4, dur: 1},
           {freq: NOTES.E4, dur: 2}, {freq: NOTES.G4, dur: 2},
           {freq: NOTES.D4, dur: 1}, {freq: NOTES.E4, dur: 1}, {freq: NOTES.D4, dur: 1}, {freq: NOTES.C4, dur: 1},
           {freq: NOTES.A3, dur: 2}, {freq: NOTES.G3, dur: 2},
-          // Outro
           {freq: NOTES.C4, dur: 4}, {freq: NOTES.REST, dur: 4}
         ];
         break;
 
       case 'HOME':
-        // Cozy Waltz (Triangle)
+        // Cozy Waltz
         waveType = 'triangle';
         tempo = 0.5;
         sequence = [
@@ -212,7 +209,6 @@ class AudioManager {
         break;
 
       case 'SCHOOL':
-        // Playful March (Square)
         waveType = 'square';
         tempo = 0.2;
         sequence = [
@@ -233,7 +229,6 @@ class AudioManager {
         break;
 
       case 'COMPANY':
-        // Depressing Mechanical Loop (Sawtooth)
         waveType = 'sawtooth';
         tempo = 0.3;
         sequence = [
@@ -250,31 +245,25 @@ class AudioManager {
         break;
 
       case 'BATTLE':
-        // Urgent Arpeggio (Square) - Optimized for variety (Key changes & Breaks)
         waveType = 'square';
         tempo = 0.11;
         sequence = [
-          // Section A: C Minor Arp
           {freq: NOTES.C4, dur: 1}, {freq: NOTES.Ds4, dur: 1}, {freq: NOTES.G4, dur: 1}, {freq: NOTES.C5, dur: 1},
           {freq: NOTES.G4, dur: 1}, {freq: NOTES.Ds4, dur: 1}, {freq: NOTES.C4, dur: 1}, {freq: NOTES.G3, dur: 1},
           {freq: NOTES.C4, dur: 1}, {freq: NOTES.Ds4, dur: 1}, {freq: NOTES.G4, dur: 1}, {freq: NOTES.C5, dur: 1},
           {freq: NOTES.Ds5, dur: 1}, {freq: NOTES.C5, dur: 1}, {freq: NOTES.G4, dur: 1}, {freq: NOTES.Ds4, dur: 1},
           
-          // Section B: F Minor Arp (Subdominant)
           {freq: NOTES.F4, dur: 1}, {freq: NOTES.Gs4, dur: 1}, {freq: NOTES.C5, dur: 1}, {freq: NOTES.F5, dur: 1},
           {freq: NOTES.C5, dur: 1}, {freq: NOTES.Gs4, dur: 1}, {freq: NOTES.F4, dur: 1}, {freq: NOTES.C4, dur: 1},
           
-          // Section C: Diminished tension
           {freq: NOTES.B3, dur: 1}, {freq: NOTES.D4, dur: 1}, {freq: NOTES.F4, dur: 1}, {freq: NOTES.Gs4, dur: 1},
           {freq: NOTES.B4, dur: 1}, {freq: NOTES.D5, dur: 1}, {freq: NOTES.F5, dur: 1}, {freq: NOTES.Gs5, dur: 1},
           
-          // Section D: Chromatic run down
           {freq: NOTES.G5, dur: 1}, {freq: NOTES.Fs5, dur: 1}, {freq: NOTES.F5, dur: 1}, {freq: NOTES.E5, dur: 1},
           {freq: NOTES.Ds5, dur: 1}, {freq: NOTES.D5, dur: 1}, {freq: NOTES.Cs5, dur: 1}, {freq: NOTES.C5, dur: 1},
           
-          // Section E: Rhythmic hits
           {freq: NOTES.C4, dur: 0.5}, {freq: NOTES.C4, dur: 0.5}, {freq: NOTES.REST, dur: 1},
-          {freq: NOTES.Ds4, dur: 0.5}, {freq: NOTES.Ds4, dur: 0.5}, {freq: NOTES.REST, dur: 1}, // Ds4 is Eb4
+          {freq: NOTES.Ds4, dur: 0.5}, {freq: NOTES.Ds4, dur: 0.5}, {freq: NOTES.REST, dur: 1},
           {freq: NOTES.G4, dur: 0.5}, {freq: NOTES.G4, dur: 0.5}, {freq: NOTES.REST, dur: 1},
           {freq: NOTES.C5, dur: 2},
           
@@ -295,11 +284,9 @@ class AudioManager {
         osc.type = waveType;
         osc.frequency.setValueAtTime(note.freq, this.ctx.currentTime);
         
-        // Envelope
         const startTime = this.ctx.currentTime;
         const endTime = startTime + (note.dur * tempo);
         
-        // Smoother Attack/Release for BGM
         gain.gain.setValueAtTime(0, startTime);
         gain.gain.linearRampToValueAtTime(this.currentTheme === 'COMPANY' ? 0.1 : 0.15, startTime + 0.1);
         gain.gain.setValueAtTime(this.currentTheme === 'COMPANY' ? 0.1 : 0.15, endTime - 0.1);
@@ -314,7 +301,6 @@ class AudioManager {
         this.currentBgmOscillators.push(osc);
         this.currentBgmGainNodes.push(gain);
 
-        // Cleanup old nodes
         osc.onended = () => {
             const idx = this.currentBgmOscillators.indexOf(osc);
             if (idx > -1) {
@@ -324,7 +310,6 @@ class AudioManager {
         };
     }
 
-    // Schedule next loop
     this.bgmTimeout = setTimeout(() => {
         this.scheduleNextNote();
     }, (note.dur * tempo) * 1000);
@@ -333,158 +318,79 @@ class AudioManager {
   // --- SFX SYNTHESIZER ---
 
   private playTone(freq: number, type: OscillatorType, duration: number, startTime: number = 0) {
+    // Attempt resume before every SFX (just in case)
+    this.resumeContext();
+
     if (!this.ctx || !this.sfxGain) return;
     
-    // Auto-resume if possible
-    if (this.ctx.state === 'suspended') {
-        this.ctx.resume();
+    // Safety check for suspended state
+    if (this.ctx.state === 'suspended') return;
+
+    try {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime + startTime);
+
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime + startTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + startTime + duration);
+
+        osc.connect(gain);
+        gain.connect(this.sfxGain);
+
+        osc.start(this.ctx.currentTime + startTime);
+        osc.stop(this.ctx.currentTime + startTime + duration);
+    } catch (e) {
+        console.warn("Audio play failed", e);
     }
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + startTime);
-
-    gain.gain.setValueAtTime(0.3, this.ctx.currentTime + startTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + startTime + duration);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-
-    osc.start(this.ctx.currentTime + startTime);
-    osc.stop(this.ctx.currentTime + startTime + duration);
   }
 
-  // 1. Move
   public playStep() {
-    if (!this.ctx || !this.sfxGain) return;
-    if (this.ctx.state === 'suspended') this.ctx.resume();
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(100, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.05);
-    
-    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.05);
+    this.playTone(100, 'triangle', 0.05); // Simplified call
   }
 
-  // 2. Select/Hover
   public playBlip() {
     this.playTone(800, 'square', 0.05);
   }
 
-  // New: Correct Answer (Crisp, high pitch)
   public playCorrect() {
     this.playTone(880, 'sine', 0.1);
-    this.playTone(1760, 'sine', 0.15, 0.08); // High harmonic
+    this.playTone(1760, 'sine', 0.15, 0.08);
   }
 
-  // New: Wrong Answer (Dull, low pitch)
   public playWrong() {
-    if (!this.ctx || !this.sfxGain) return;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
-    osc.frequency.linearRampToValueAtTime(50, this.ctx.currentTime + 0.2); // Pitch slide down
-
-    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.2);
+    this.playTone(150, 'sawtooth', 0.2);
   }
 
-  // 3. Confirm/Buy
   public playConfirm() {
     this.playTone(1200, 'square', 0.1);
     this.playTone(1600, 'square', 0.1, 0.1);
   }
 
-  // 4. Coin/Loot
   public playCoin() {
     this.playTone(1500, 'sine', 0.1);
     this.playTone(2000, 'sine', 0.3, 0.05);
   }
 
-  // 5. Battle Encounter (Alarm-like)
   public playEncounter() {
-    if (!this.ctx || !this.sfxGain) return;
-    if (this.ctx.state === 'suspended') this.ctx.resume();
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(100, this.ctx.currentTime);
-    osc.frequency.linearRampToValueAtTime(600, this.ctx.currentTime + 0.3);
-    
-    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.5);
+    this.playTone(100, 'sawtooth', 0.5); // Simplified for consistency
   }
 
-  // 6. Attack/Damage
   public playAttack() {
-    if (!this.ctx || !this.sfxGain) return;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(100, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.2);
-
-    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.2);
+    this.playTone(100, 'sawtooth', 0.2);
   }
 
-  // 7. Victory
   public playWin() {
     const now = 0;
-    this.playTone(523.25, 'square', 0.1, now);       // C5
-    this.playTone(659.25, 'square', 0.1, now + 0.1); // E5
-    this.playTone(783.99, 'square', 0.1, now + 0.2); // G5
-    this.playTone(1046.50, 'square', 0.4, now + 0.3);// C6
+    this.playTone(523.25, 'square', 0.1, now);       
+    this.playTone(659.25, 'square', 0.1, now + 0.1); 
+    this.playTone(783.99, 'square', 0.1, now + 0.2); 
+    this.playTone(1046.50, 'square', 0.4, now + 0.3);
   }
 
-  // 8. Lose
   public playLose() {
-    if (!this.ctx || !this.sfxGain) return;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-    osc.frequency.linearRampToValueAtTime(100, this.ctx.currentTime + 0.8);
-
-    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.8);
-
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.8);
+    this.playTone(400, 'triangle', 0.8);
   }
 }
 
