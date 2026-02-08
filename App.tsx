@@ -83,6 +83,28 @@ const App: React.FC = () => {
   const [threatLevel, setThreatLevel] = useState<0 | 1 | 2 | 3>(0);
   const [levelGainedMoney, setLevelGainedMoney] = useState(0);
 
+  // Mobile Audio Unlocker
+  useEffect(() => {
+    const unlockAudio = () => {
+        audioManager.resumeContext();
+        if (audioManager.isContextRunning()) {
+            window.removeEventListener('click', unlockAudio);
+            window.removeEventListener('touchstart', unlockAudio);
+            window.removeEventListener('keydown', unlockAudio);
+        }
+    };
+
+    window.addEventListener('click', unlockAudio);
+    window.addEventListener('touchstart', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+
+    return () => {
+        window.removeEventListener('click', unlockAudio);
+        window.removeEventListener('touchstart', unlockAudio);
+        window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
+
   const addLog = useCallback((message: string) => {
     setGameState(prev => ({
       ...prev,
@@ -196,6 +218,7 @@ const App: React.FC = () => {
   };
 
   const handleSelectMap = (type: MapType) => {
+      audioManager.resumeContext();
       audioManager.playConfirm();
       const config = MAP_CONFIGS[type];
       initGame(type);
@@ -204,7 +227,7 @@ const App: React.FC = () => {
   };
 
   const handleEnterLevel = () => {
-    audioManager.init(); // Ensure init
+    audioManager.resumeContext();
     audioManager.playConfirm();
     setScreen('GAME');
   };
@@ -656,7 +679,7 @@ const App: React.FC = () => {
 
           <div className="flex flex-col gap-4 w-full max-w-xs relative z-10">
             <button 
-              onClick={() => { audioManager.init(); audioManager.playConfirm(); setScreen('MAP_SELECT'); }} 
+              onClick={() => { audioManager.resumeContext(); audioManager.playConfirm(); setScreen('MAP_SELECT'); }} 
               className="group relative px-8 py-5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl transition-all hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(185,28,28,0.4)] border-b-4 border-red-900 overflow-hidden"
             >
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
@@ -667,7 +690,7 @@ const App: React.FC = () => {
             </button>
 
             <button 
-              onClick={() => { audioManager.init(); audioManager.playConfirm(); setShowShop(true); }}
+              onClick={() => { audioManager.resumeContext(); audioManager.playConfirm(); setShowShop(true); }}
               className="group px-8 py-4 bg-yellow-900/40 hover:bg-yellow-800/50 text-yellow-500 font-bold rounded-xl transition-all border border-yellow-700/50 flex items-center justify-center gap-3"
             >
               <ShoppingCart size={20} />
@@ -675,7 +698,7 @@ const App: React.FC = () => {
             </button>
 
             <button 
-              onClick={() => { audioManager.init(); audioManager.playConfirm(); setScreen('COLLECTION'); }}
+              onClick={() => { audioManager.resumeContext(); audioManager.playConfirm(); setScreen('COLLECTION'); }}
               className="group px-8 py-4 bg-yellow-700/20 hover:bg-yellow-700/30 text-yellow-500 font-bold rounded-xl transition-all border border-yellow-700/50 flex items-center justify-center gap-3"
             >
               <Book size={20} />
