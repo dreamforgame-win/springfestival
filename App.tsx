@@ -405,15 +405,16 @@ const App: React.FC = () => {
         let battleTarget: Entity | null = null;
         const npcs = nextEntities.filter(e => e.type === 'NPC' && !e.isDead);
         
-        npcs.forEach(npc => {
-            if (battleTarget) return;
+        // Fix: Use for...of instead of forEach for better TS inference on variable mutation (battleTarget)
+        for (const npc of npcs) {
+            if (battleTarget) break;
 
             const currentNpc = nextEntities.find(e => e.id === npc.id);
-            if (!currentNpc) return;
+            if (!currentNpc) continue;
 
             const distToPlayer = Math.sqrt(Math.pow(currentPPos.x - currentNpc.pos.x, 2) + Math.pow(currentPPos.y - currentNpc.pos.y, 2));
 
-            const baseProb = NPC_AGGRESSION[currentNpc.npcType!] || 0.5;
+            const baseProb = NPC_AGGRESSION[currentNpc.npcType as NpcType] || 0.5;
             const bonusProb = Math.min(MAX_CHASE_PROBABILITY, gameState.totalSteps * AGGRESSION_PER_STEP);
             
             let isAggressive = Math.random() < (baseProb + bonusProb);
@@ -475,18 +476,23 @@ const App: React.FC = () => {
                     currentNpc.pos = { x: nx, y: ny };
                 }
             }
-        });
+        }
 
         if (battleTarget) {
-            const target = battleTarget; 
-            setTimeout(() => {
-                audioManager.playEncounter(); // Encounter sound
-                setAggressionData({ active: true, npcName: NPC_NAMES[target.npcType!] });
+            const target = battleTarget as Entity;
+            if (target.npcType) {
+                // Fix: Explicitly assert type to avoid TS2339/TS7053
+                const npcName = NPC_NAMES[target.npcType as NpcType];
+                
                 setTimeout(() => {
-                    setAggressionData({ active: false, npcName: null });
-                    startBattle(target);
-                }, 1000);
-            }, 0);
+                    audioManager.playEncounter(); // Encounter sound
+                    setAggressionData({ active: true, npcName: npcName });
+                    setTimeout(() => {
+                        setAggressionData({ active: false, npcName: null });
+                        startBattle(target);
+                    }, 1000);
+                }, 0);
+            }
         }
 
         return nextEntities;
